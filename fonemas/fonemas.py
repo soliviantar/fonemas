@@ -2,56 +2,66 @@ import re
 from silabeador import Syllabification
 from dataclasses import dataclass
 
-
 @dataclass
 class Values:
     words: list
     syllables: list
 
-
 class Transcription:
     def __init__(self, sentence, mono=False, exceptions=1,
                  epenthesis=False, aspiration=False, rehash=False,
                  stress='"'):
-        self.sentence = self.__clean(sentence, epenthesis)
+        self.original_sentence = sentence
+        self.tokens = self.preserve_punctuation(sentence)
+        self.cleaned_tokens = self.__clean(self.tokens, epenthesis)
         self.__exceptions = exceptions
         if rehash:
-            self.sentence = self.make_rehash(self.sentence)
-        self.phonology = self.transcription_fnl(self.sentence, mono,
+            self.cleaned_tokens = self.make_rehash(self.cleaned_tokens)
+        self.phonology = self.transcription_fnl(self.cleaned_tokens, mono,
                                                 aspiration)
         self.phonetics = self.transcription_fnt(self.phonology)
         self.sampa = self.ipa2sampa(self.phonetics, stress)
+        self.result_sentence = self.reinsert_punctuation(self.phonetics.words)
 
     @staticmethod
-    def __clean(raw_sentence, epen):
+    def preserve_punctuation(sentence):
+        return re.findall(r'\w+|[¿?¡!,.:;]', sentence)
+
+    def reinsert_punctuation(self, words):
+        tokens = self.tokens
+        result = []
+        word_index = 0
+        for token in tokens:
+            if re.match(r'[¿?¡!,.:;]', token):
+                result.append(token)
+            else:
+                result.append(words[word_index])
+                word_index += 1
+        return ' '.join(result)
+
+    @staticmethod
+    def __clean(tokens, epen):
         letters = {'b': 'be', 'c': 'θe', 'ch': 'ʧe', 'd': 'de', 'f': 'efe',
                    'g': 'ge', 'h': 'haʧe', 'j': 'jota', 'k': 'ka', 'l': 'ele',
                    'll': 'eʎe', 'm': 'eme', 'n': 'ene', 'p': 'pe', 'q': 'ku',
                    'r': 'erre', 's': 'ese', 't': 'te', 'v': 'ube',
                    'w': 'ubedoble', 'x': 'ekis', 'z': 'θeta'}
-        symbols = ['(', ')', '¿', '?', '¡', '!', '«', '»', '“', '”', '‘', '’',
-                   '[', ']', '—', '…', ',', ';', ':', "'", '.', '–', '"', '-']
         diacritics = {'à': 'á', 'è': 'é', 'ì': 'í', 'ò': 'ó', 'ù': 'ú',
-                      'æ': 'e', 'ä': '_a', 'ë': '_e', 'ï': '_i',  'ö': '_o',
+                      'æ': 'e', 'ä': '_a', 'ë': '_e', 'ï': '_i', 'ö': '_o',
                       'ã': 'á', 'õ': 'ó', 'â': 'a', 'ê': 'e', 'î': 'i',
                       'ô': 'o', 'û': 'u', 'ç': 'θ'}
-        raw_sentence = raw_sentence.lower()
-        for char in letters:
-            if re.search(rf'\b{char}\b', raw_sentence):
-                raw_sentence = re.sub(rf'\b{char}\b', letters[char],
-                                      raw_sentence)
-        for match in letters:
-            raw_sentence = re.sub(rf'\b{match}\b', letters[char], raw_sentence)
-        for char in symbols:
-            if char in raw_sentence:
-                raw_sentence = raw_sentence.replace(char, ' ')
-        for char in diacritics:
-            if char in raw_sentence:
-                raw_sentence = raw_sentence.replace(char, diacritics[char])
-        if epen:
-            raw_sentence = re.sub(r'\bs((?![aeiouáéíóú]))', r'es\1',
-                                  raw_sentence)
-        return raw_sentence
+        cleaned_tokens = []
+        for token in tokens:
+            if not re.match(r'[¿?¡!,.:;]', token):
+                token = token.lower()
+                for char in letters:
+                    token = re.sub(rf'\b{char}\b', letters[char], token)
+                for char in diacritics:
+                    token = token.replace(char, diacritics[char])
+                if epen:
+                    token = re.sub(r'\bs((?![aeiouáéíóú]))', r'es\1', token)
+            cleaned_tokens.append(token)
+        return cleaned_tokens
 
     @staticmethod
     def make_rehash(sentence):
@@ -64,7 +74,7 @@ class Transcription:
                     sentence[idx - 1] = sentence[idx - 1][:-1]
         return sentence
 
-    def transcription_fnl(self, sentence, mono, aspiration):
+    def transcription_fnl(self, tokens, mono, aspiration):
         diacritics = {'á': 'a', 'à': 'a', 'ä': 'a',
                       'é': 'e', 'è': 'e', 'ë': 'e',
                       'ú': 'u', 'ù': 'u', 'ü': 'u',
@@ -76,6 +86,7 @@ class Transcription:
                       'cë': 'θë', 'ci': 'θi', 'cí': 'θí', 'cï': 'θï',
                       'cj': 'θj', 'ch': 'ʧ', 'c': 'k', 'qu': 'k', 'll': 'ʎ',
                       'ph': 'f', 'hie': 'ʝe', 'h': ''}
+        sentence = ' '.join(tokens)
         sentence = re.sub(r'(?:([nls])r|\br|rr)', r'\1R', sentence)
         if aspiration:
             sentence = re.sub(r'\bh', 'ʰ', sentence)
@@ -109,35 +120,38 @@ class Transcription:
         words = []
         syllables_sentence = []
         for word in sentence.split():
-            if len(word) > 5 and word.endswith('mente'):
-                syllabification = Syllabification(word=word[:-5],
-                                                  exceptions=self.__exceptions,
-                                                  ipa=True,
-                                                  h=True)
-                syllables = syllabification.syllables
-                if len(syllables) > 1:
-                    syllables = syllables + ['ˌmen', 'te']
-                    stress = syllabification.stress - 2
-                    word = word.replace('mente', 'ˌmente')
+            if word and word.isalpha():  # Ensure word is not empty and is alphabetic
+                if len(word) > 5 and word.endswith('mente'):
+                    syllabification = Syllabification(word=word[:-5],
+                                                      exceptions=self.__exceptions,
+                                                      ipa=True,
+                                                      h=True)
+                    syllables = syllabification.syllables
+                    if len(syllables) > 1:
+                        syllables = syllables + ['ˌmen', 'te']
+                        stress = syllabification.stress - 2
+                        word = word.replace('mente', 'ˌmente')
+                    else:
+                        syllables = syllables + ['ˈmen', 'te']
+                        stress = -2
                 else:
-                    syllables = syllables + ['ˈmen', 'te']
-                    stress = -2
+                    syllabification = Syllabification(word,
+                                                      exceptions=self.__exceptions,
+                                                      ipa=True,
+                                                      h=True)
+                    syllables = syllabification.syllables
+                    stress = syllabification.stress
+                syllables = self.__diphthongs(syllables)
+                syllables[stress] = f'ˈ{syllables[stress]}'
+                word = ''
+                for syllable in syllables:
+                    if not mono and len(syllables) == 1:
+                        syllable = syllable.strip('ˈ')
+                    syllables_sentence.append(syllable)
+                    word += syllable
+                words.append(word)
             else:
-                syllabification = Syllabification(word,
-                                                  exceptions=self.__exceptions,
-                                                  ipa=True,
-                                                  h=True)
-                syllables = syllabification.syllables
-                stress = syllabification.stress
-            syllables = self.__diphthongs(syllables)
-            syllables[stress] = f'ˈ{syllables[stress]}'
-            word = ''
-            for syllable in syllables:
-                if not mono and len(syllables) == 1:
-                    syllable = syllable.strip('ˈ')
-                syllables_sentence.append(syllable)
-                word += syllable
-            words.append(word)
+                words.append(word)  # Add punctuation and symbols directly
         return Values(words, syllables_sentence)
 
     def __diphthongs(self, syllables):
@@ -161,7 +175,7 @@ class Transcription:
         print(words)
         allophones = {'b': 'β', 'd': 'ð', 'g': 'ɣ'}
         for allo in allophones.keys():
-            regex = re.compile(r'([^mnɲ\n\-\sˈ][\-\s]{,1}ˈ{,1})' + allo)
+            regex = re.compile(r'([^mnɲ\n\-\sˈ,.?¿¡!][\-\s]{,1}ˈ{,1})' + allo)
             words = re.sub(regex, rf'\1{allophones[allo]}', words)
         words = re.sub(r'θ([\s\-ˈ]*)([bdgβðɣmnɲlʎrɾ])', r'ð\1\2', words)
         words = re.sub(r's([\s\-ˈ]*)([bdgβðɣmnɲlʎrɾ])', r'z\1\2', words)
@@ -193,7 +207,7 @@ class Transcription:
                       'xo': 'χo', 'xˈo': 'χˈo',
                       'x-o': 'χ-o', 'x-ˈo': 'χ-ˈo',
                       'xw': 'χw', 'xˈw': 'χˈw',
-                      'x-w': 'χ-w', 'x-ˈw': 'χ-ˈw'
+                      'x-w': 'χ-w', 'x-ˈw': 'χ-ˈw',
                       }
         if any(allophone in words for allophone in allophones):
             for key, value in allophones.items():
